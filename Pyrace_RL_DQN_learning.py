@@ -1,27 +1,45 @@
 import sys, os
-import random
+import math, random
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Avoid TkAgg memory issues
+import matplotlib.pyplot as plt
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+
 import gymnasium as gym
 import gym_race
 
-# --- Hyperparameters ---
-GAMMA = 0.99
-LR = 1e-3
-EPSILON = 1.0
-EPSILON_MIN = 0.05
-EPSILON_DECAY = 0.995
-BATCH_SIZE = 64
-MEMORY_SIZE = 10000
-NUM_EPISODES = 500
+# --- Register the environment manually if not already registered ---
+from gymnasium.envs.registration import register
+try:
+    register(
+        id='Pyrace-v1',
+        entry_point='gym_race.envs:RaceEnv',
+        max_episode_steps=2000,
+    )
+except:
+    pass  # Already registered
 
-# --- Environment setup ---
-env = gym.make("Pyrace-v1")
+# --- Parameters ---
+VERSION_NAME = 'DQN_v01'
+REPORT_EPISODES  = 500
+DISPLAY_EPISODES = 50
+NUM_EPISODES = 10000
+MAX_T = 2000
+
+MIN_EXPLORE_RATE = 0.001
+MIN_LEARNING_RATE = 0.2
+DISCOUNT_FACTOR = 0.99
+
+env = gym.make("Pyrace-v1").unwrapped
 state_dim = env.observation_space.shape[0]
 action_dim = env.action_space.n
+
+DECAY_FACTOR = 10000.0  # Adjusted decay for smoother exploration
 
 # --- DQN Model ---
 class DQN(nn.Module):
@@ -36,45 +54,50 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         return self.out(x)
 
-# --- Replay Memory ---
+# --- Replay Buffer ---
 from collections import deque
 
 class ReplayMemory:
-    def __init__(self, capacity=MEMORY_SIZE):
-        self.memory = deque(maxlen=capacity)
+    def __init__(self, capacity=10000):
+        self.buffer = deque(maxlen=capacity)
 
     def push(self, transition):
-        self.memory.append(transition)
+        self.buffer.append(transition)
 
     def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+        return random.sample(self.buffer, batch_size)
 
     def __len__(self):
-        return len(self.memory)
+        return len(self.buffer)
+
+# --- Exploration & Learning Rate Schedulers ---
+def get_explore_rate(t):
+    return max(MIN_EXPLORE_RATE, min(0.8, 1.0 - math.log10((t + 1) / DECAY_FACTOR)))
+
+def get_learning_rate(t):
+    return max(MIN_LEARNING_RATE, min(0.8, 1.0 - math.log10((t + 1) / DECAY_FACTOR)))
 
 # --- DQN Agent ---
 class DQNAgent:
     def __init__(self, state_dim, action_dim):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.epsilon = EPSILON
         self.model = DQN(state_dim, action_dim)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=LR)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
         self.memory = ReplayMemory()
         self.loss_fn = nn.MSELoss()
+        self.epsilon = 1.0
 
-    def act(self, state):
-        if random.random() < self.epsilon:
-            return random.randrange(self.action_dim)
+    def act(self, state, explore_rate):
+        if random.random() < explore_rate:
+            return random.randrange(action_dim)
         state = torch.FloatTensor(state).unsqueeze(0)
         with torch.no_grad():
             q_values = self.model(state)
         return torch.argmax(q_values).item()
 
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.push((state, action, reward, next_state, done))
+    def remember(self, *args):
+        self.memory.push(args)
 
-    def replay(self, batch_size=BATCH_SIZE):
+    def replay(self, batch_size=64, gamma=DISCOUNT_FACTOR):
         if len(self.memory) < batch_size:
             return
         transitions = self.memory.sample(batch_size)
@@ -88,33 +111,74 @@ class DQNAgent:
 
         q_values = self.model(states).gather(1, actions)
         next_q = self.model(next_states).max(1)[0].detach().unsqueeze(1)
-        target_q = rewards + GAMMA * next_q * (1 - dones)
+        target_q = rewards + gamma * next_q * (1 - dones)
 
         loss = self.loss_fn(q_values, target_q)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        if self.epsilon > EPSILON_MIN:
-            self.epsilon *= EPSILON_DECAY
-
-# --- Simulation Function ---
-def simulate():
+# --- Training Loop (simulate) ---
+def simulate(learning=True, episode_start=0):
     agent = DQNAgent(state_dim, action_dim)
-    for episode in range(NUM_EPISODES):
-        state, _ = env.reset()
-        done = False
-        total_reward = 0
+    total_rewards = []
+    max_reward = -10000
+    threshold = 1000
 
-        while not done:
-            action = agent.act(state)
-            next_state, reward, done, _, _ = env.step(action)
+    if not os.path.exists(f"models_{VERSION_NAME}"):
+        os.makedirs(f"models_{VERSION_NAME}")
+
+    env.set_view(True)
+
+    for episode in range(episode_start, NUM_EPISODES + episode_start):
+        total_reward = 0
+        state, _ = env.reset()
+
+        explore_rate = get_explore_rate(episode)
+        learning_rate = get_learning_rate(episode)
+
+        if not learning:
+            env.pyrace.mode = 2  # continuous display
+
+        for t in range(MAX_T):
+            action = agent.act(state, explore_rate if learning else 0)
+            next_state, reward, done, _, info = env.step(action)
             agent.remember(state, action, reward, next_state, done)
-            agent.replay()
+            if learning:
+                agent.replay()
+
             state = next_state
             total_reward += reward
 
-        print(f"Episode {episode + 1} — Total reward: {total_reward}")
+            if (episode % DISPLAY_EPISODES == 0) or (env.pyrace.mode == 2):
+                env.set_msgs([
+                    'SIMULATE',
+                    f'Episode: {episode}',
+                    f'Time steps: {t}',
+                    f'check: {info["check"]}',
+                    f'dist: {info["dist"]}',
+                    f'crash: {info["crash"]}',
+                    f'Reward: {total_reward:.0f}',
+                    f'Max Reward: {max_reward:.0f}',
+                ])
+                env.render()
+
+            if done or t >= MAX_T - 1:
+                if total_reward > max_reward:
+                    max_reward = total_reward
+                break
+
+        total_rewards.append(total_reward)
+
+        if learning and episode % REPORT_EPISODES == 0:
+            plt.plot(total_rewards)
+            plt.ylabel("rewards")
+            plt.xlabel("episode")
+            plt.title("DQN Reward Progress")
+            plt.savefig(f"models_{VERSION_NAME}/rewards_{episode}.png")
+            plt.close()
+
+        print(f"Episode {episode} — Total reward: {total_reward:.2f} — Explore Rate: {explore_rate:.4f}")
 
 if __name__ == "__main__":
     simulate()
