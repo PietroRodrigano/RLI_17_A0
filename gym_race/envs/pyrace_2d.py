@@ -222,20 +222,29 @@ class PyRace2D:
             self.car.check_radar(d)
         
     def evaluate(self):
-        if not self.car.is_alive:
-            return -500  # Heavy penalty for crashing
+        reward = 0.0
         """
         if self.car.check_flag:
             self.car.check_flag = False
             reward = 2000 - self.car.time_spent
             self.car.time_spent = 0
         """
+        # Reward reaching a checkpoint
+        if self.car.check_flag:
+            self.car.check_flag = False
+            reward += 1000.0
 
-        progress = self.car.distance  # Reward for advancing
-        time_penalty = self.car.time_spent * 0.1  # Discourage wasting time
-        checkpoint_bonus = 100 * self.car.current_check  # Encourage passing checkpoints
+        # Penalty for crash
+        if not self.car.is_alive:
+            reward -= 500.0
 
-        return progress - time_penalty + checkpoint_bonus
+        # Reward for distance covered
+        reward += self.car.distance * 0.1
+
+        # Bonus for staying alive
+        reward += self.car.time_spent * 0.05
+
+        return reward
 
 
     def is_done(self):

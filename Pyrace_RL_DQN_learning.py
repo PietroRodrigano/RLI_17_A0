@@ -25,7 +25,7 @@ try:
 except:
     pass
 
-VERSION_NAME = 'DQN_v01'
+VERSION_NAME = 'DQN_v02_improved'
 REPORT_EPISODES = 500
 DISPLAY_EPISODES = 500
 NUM_EPISODES = 10000
@@ -41,6 +41,7 @@ action_dim = env.action_space.n
 
 DECAY_FACTOR = 10000.0
 
+# --- DQN Neural Network ---
 class DQN(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(DQN, self).__init__()
@@ -53,6 +54,7 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         return self.out(x)
 
+# --- Experience Replay Buffer ---
 from collections import deque
 
 class ReplayMemory:
@@ -68,12 +70,14 @@ class ReplayMemory:
     def __len__(self):
         return len(self.buffer)
 
+# --- Decay Schedulers ---
 def get_explore_rate(t):
     return max(MIN_EXPLORE_RATE, 0.05 + 0.95 * math.exp(-t / 5000))
 
 def get_learning_rate(t):
     return max(MIN_LEARNING_RATE, min(0.8, 1.0 - math.log10((t + 1) / DECAY_FACTOR)))
 
+# --- DQN Agent with Target Network ---
 class DQNAgent:
     def __init__(self, state_dim, action_dim):
         self.model = DQN(state_dim, action_dim)
@@ -82,7 +86,6 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
         self.memory = ReplayMemory()
         self.loss_fn = nn.MSELoss()
-        self.epsilon = 1.0
 
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
@@ -119,10 +122,11 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
+# --- Training Loop ---
 def simulate(learning=True, episode_start=0):
     agent = DQNAgent(state_dim, action_dim)
     total_rewards = []
-    max_reward = -10000
+    max_reward = -float("inf")
 
     if not os.path.exists(f"models_{VERSION_NAME}"):
         os.makedirs(f"models_{VERSION_NAME}")
