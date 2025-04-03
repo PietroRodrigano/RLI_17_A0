@@ -26,8 +26,8 @@ except:
     pass
 
 VERSION_NAME = 'DQN_v02_improved'
-REPORT_EPISODES = 500
-DISPLAY_EPISODES = 500
+REPORT_EPISODES = 1
+DISPLAY_EPISODES = 1
 NUM_EPISODES = 10000
 MAX_T = 2000
 
@@ -131,13 +131,27 @@ def simulate(learning=True, episode_start=0):
     if not os.path.exists(f"models_{VERSION_NAME}"):
         os.makedirs(f"models_{VERSION_NAME}")
 
-    if os.path.exists(f"models_{VERSION_NAME}/best_model.pth"):
+    checkpoint_path = f"models_{VERSION_NAME}/checkpoint.pth"
+    start_episode = episode_start
+
+    # Load checkpoint if available
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path)
+        agent.model.load_state_dict(checkpoint['model_state_dict'])
+        agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        agent.update_target_network()
+        total_rewards = checkpoint['total_rewards']
+        max_reward = checkpoint['max_reward']
+        start_episode = checkpoint['episode'] + 1
+        print(f"✅ Resumed from checkpoint at episode {start_episode}")
+    elif os.path.exists(f"models_{VERSION_NAME}/best_model.pth"):
         agent.model.load_state_dict(torch.load(f"models_{VERSION_NAME}/best_model.pth"))
         agent.update_target_network()
+        print("✅ Loaded best model to start training.")
 
     env.set_view(True)
 
-    for episode in range(episode_start, NUM_EPISODES + episode_start):
+    for episode in range(start_episode, NUM_EPISODES + start_episode):
         total_reward = 0
         state, _ = env.reset()
 
@@ -191,6 +205,13 @@ def simulate(learning=True, episode_start=0):
         if learning and episode % REPORT_EPISODES == 0:
             plt.savefig(f"models_{VERSION_NAME}/rewards_{episode}.png")
             torch.save(agent.model.state_dict(), f"models_{VERSION_NAME}/model_episode_{episode}.pth")
+            torch.save({
+                'episode': episode,
+                'model_state_dict': agent.model.state_dict(),
+                'optimizer_state_dict': agent.optimizer.state_dict(),
+                'total_rewards': total_rewards,
+                'max_reward': max_reward
+            }, checkpoint_path)
             plt.close()
 
         print(f"Episode {episode} — Total reward: {total_reward:.2f} — Explore Rate: {explore_rate:.4f}")
