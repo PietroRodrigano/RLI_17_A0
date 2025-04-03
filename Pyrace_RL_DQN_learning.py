@@ -266,4 +266,5 @@ def simulate(learning=True, episode_start=0):
         print(f"Episode {episode} — Total reward: {total_reward:.2f} — Explore Rate: {explore_rate:.4f} — Learning Rate: {learning_rate:.6f}")
 
 if __name__ == "__main__":
-    simulate()
+    # Run a single episode with the most recent model
+    simulate(learning=False, episode_start=0)
