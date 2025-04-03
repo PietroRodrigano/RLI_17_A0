@@ -177,7 +177,7 @@ def simulate(learning=True, episode_start=0):
             torch.save(agent.model.state_dict(), f"models_{VERSION_NAME}/model_episode_{episode}.pth")
             plt.close()
 
-        print(f"Episode {episode} — Total reward: {total_reward:.2f} — Explore Rate: {explore_rate:.4f}")
+        #print(f"Episode {episode} — Total reward: {total_reward:.2f} — Explore Rate: {explore_rate:.4f}")
 
 if __name__ == "__main__":
     simulate()
