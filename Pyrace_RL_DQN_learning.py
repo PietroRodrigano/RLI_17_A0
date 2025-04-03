@@ -27,7 +27,7 @@ except:
 
 VERSION_NAME = 'DQN_v01'
 REPORT_EPISODES = 500
-DISPLAY_EPISODES = 100
+DISPLAY_EPISODES = 500
 NUM_EPISODES = 10000
 MAX_T = 2000
 
@@ -69,7 +69,7 @@ class ReplayMemory:
         return len(self.buffer)
 
 def get_explore_rate(t):
-    return max(MIN_EXPLORE_RATE, min(0.8, 1.0 - math.log10((t + 1) / DECAY_FACTOR)))
+    return max(MIN_EXPLORE_RATE, 0.05 + 0.95 * math.exp(-t / 5000))
 
 def get_learning_rate(t):
     return max(MIN_LEARNING_RATE, min(0.8, 1.0 - math.log10((t + 1) / DECAY_FACTOR)))
@@ -77,10 +77,15 @@ def get_learning_rate(t):
 class DQNAgent:
     def __init__(self, state_dim, action_dim):
         self.model = DQN(state_dim, action_dim)
+        self.target_model = DQN(state_dim, action_dim)
+        self.update_target_network()
         self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
         self.memory = ReplayMemory()
         self.loss_fn = nn.MSELoss()
         self.epsilon = 1.0
+
+    def update_target_network(self):
+        self.target_model.load_state_dict(self.model.state_dict())
 
     def act(self, state, explore_rate):
         if random.random() < explore_rate:
@@ -106,7 +111,7 @@ class DQNAgent:
         dones = torch.FloatTensor(dones).unsqueeze(1)
 
         q_values = self.model(states).gather(1, actions)
-        next_q = self.model(next_states).max(1)[0].detach().unsqueeze(1)
+        next_q = self.target_model(next_states).max(1)[0].detach().unsqueeze(1)
         target_q = rewards + gamma * next_q * (1 - dones)
 
         loss = self.loss_fn(q_values, target_q)
@@ -121,6 +126,10 @@ def simulate(learning=True, episode_start=0):
 
     if not os.path.exists(f"models_{VERSION_NAME}"):
         os.makedirs(f"models_{VERSION_NAME}")
+
+    if os.path.exists(f"models_{VERSION_NAME}/best_model.pth"):
+        agent.model.load_state_dict(torch.load(f"models_{VERSION_NAME}/best_model.pth"))
+        agent.update_target_network()
 
     env.set_view(True)
 
@@ -141,7 +150,6 @@ def simulate(learning=True, episode_start=0):
             if learning:
                 agent.replay()
 
-            print(f"  Step {t} — Action: {action}, Reward: {reward:.2f}, Done: {done}")
             state = next_state
             total_reward += reward
 
@@ -161,7 +169,11 @@ def simulate(learning=True, episode_start=0):
             if done or t >= MAX_T - 1:
                 if total_reward > max_reward:
                     max_reward = total_reward
+                    torch.save(agent.model.state_dict(), f"models_{VERSION_NAME}/best_model.pth")
                 break
+
+        if episode % 10 == 0:
+            agent.update_target_network()
 
         total_rewards.append(total_reward)
 
@@ -177,7 +189,7 @@ def simulate(learning=True, episode_start=0):
             torch.save(agent.model.state_dict(), f"models_{VERSION_NAME}/model_episode_{episode}.pth")
             plt.close()
 
-        #print(f"Episode {episode} — Total reward: {total_reward:.2f} — Explore Rate: {explore_rate:.4f}")
+        print(f"Episode {episode} — Total reward: {total_reward:.2f} — Explore Rate: {explore_rate:.4f}")
 
 if __name__ == "__main__":
     simulate()
