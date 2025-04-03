@@ -220,23 +220,33 @@ class PyRace2D:
         self.car.radars.clear()
         for d in range(-90, 120, 45):
             self.car.check_radar(d)
-
+        
     def evaluate(self):
-        reward = 0
-        """
+        reward = 0.0
+        
+        # Reward reaching a checkpoint
         if self.car.check_flag:
             self.car.check_flag = False
-            reward = 2000 - self.car.time_spent
-            self.car.time_spent = 0
-        """
-        if not self.car.is_alive: # crash
-            reward = -10000 + self.car.distance
-
-        elif self.car.goal:
-            # reward = 10000*(1+self.car.current_check)/len(check_point)
-            reward = 10000
-            # print('goal',self.car.current_check,len(check_point))
+            reward += 2000.0  # Increased checkpoint reward
+            
+        # Penalty for crash
+        if not self.car.is_alive:
+            reward -= 1000.0  # Increased crash penalty
+            
+        # Reward for making progress towards next checkpoint
+        if not self.car.check_flag:
+            progress_reward = (self.car.prev_distance - self.car.cur_distance) * 2.0
+            reward += max(0, progress_reward)
+            
+        # Small reward for maintaining speed
+        reward += self.car.speed * 0.1
+        
+        # Small penalty for slow speed to encourage movement
+        if self.car.speed < 3:
+            reward -= 0.5
+            
         return reward
+
 
     def is_done(self):
         if not self.car.is_alive or self.car.goal:
